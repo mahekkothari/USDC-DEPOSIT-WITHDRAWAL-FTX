@@ -1,0 +1,61 @@
+with
+  address (address) as (
+    values
+      -- FTX International 
+      (0x2faf487a4414fe77e2327f0bf4ae2a264a776ad2),
+      (0xc098b2a3aa256d2140208c3de6543aaef5cd3a94)
+      -- FTX US: 0x7abe0ce388281d2acf297cb089caef3819b13448
+  ),
+  token_price_dec as (
+    select
+      date_trunc('day', minute) as time,
+      decimals,
+      avg(price) as avg_price
+    from
+      prices.usd
+    where
+      minute >= cast('2022-11-01' as timestamp)
+      and minute <= cast('2022-11-11' as timestamp)
+      and blockchain = 'ethereum'
+      and contract_address = 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48 -- USDC on Ethereum
+    group by 1, 2
+    limit 10
+  ),
+  inflow as (
+    select
+      date_trunc('day', evt_block_time) as time,
+      'in' as category,
+      sum(cast(value as double) / pow(10, tk.decimals)) as raw_amt,
+      sum(
+        cast(value as double) / pow(10, tk.decimals) * tk.avg_price
+      ) as usd_amt
+    from
+      erc20_ethereum.evt_Transfer t
+      left join token_price_dec tk on tk.time = date_trunc('day', evt_block_time)
+    where
+      t.contract_address = 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48
+      and t.evt_block_time >= cast('2022-11-01' as timestamp)
+      and t.evt_block_time <= cast('2022-11-11' as timestamp)
+      and t.to in (select address from address )
+    group by 1, 2
+  ),
+  outflow as (
+    select
+      date_trunc('day', evt_block_time) as time,
+      'out' as category,
+      -1 * sum(cast(value as double) / pow(10, tk.decimals)) as raw_amt,
+      -1 * sum(cast(value as double) / pow(10, tk.decimals) * tk.avg_price
+      ) as usd_amt
+    from
+      erc20_ethereum.evt_Transfer t
+      left join token_price_dec tk on tk.time = date_trunc('day', evt_block_time)
+    where
+      t.contract_address = 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48
+      and t.evt_block_time >= cast('2022-11-01' as timestamp)
+      and t.evt_block_time <= cast('2022-11-11' as timestamp)
+      and t."from" in (select address from address)
+    group by 1, 2
+  )
+select * from inflow 
+union all
+select * from outflow
